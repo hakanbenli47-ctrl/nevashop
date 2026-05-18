@@ -180,34 +180,40 @@ Adet: 1
     window.open(whatsappLink, "_blank");
   };
 
-  if (yukleniyor) {
-    return (
-      <main className="flex min-h-screen items-center justify-center bg-[#fff7f2] text-zinc-900">
-        <div className="rounded-2xl bg-white px-8 py-6 text-center shadow-sm">
-          <p className="text-sm font-bold text-[#ff5c35]">{siteAdi}</p>
-          <p className="mt-2 text-base font-semibold">Ürünler yükleniyor...</p>
-        </div>
-      </main>
-    );
-  }
+ if (yukleniyor) {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-[#fff7f2] text-zinc-900">
+      <div className="rounded-3xl bg-white px-10 py-8 text-center shadow-sm">
+        <img
+          src="/neva-logo.png"
+          alt={siteAdi}
+          className="mx-auto h-24 w-auto object-contain sm:h-28"
+        />
+
+       <p className="mt-4 text-sm font-semibold text-zinc-500">
+  Mağaza hazırlanıyor...
+</p>
+      </div>
+    </main>
+  );
+}
 
   return (
     <main className="min-h-screen bg-[#fff7f2] text-zinc-900">
       <header className="sticky top-0 z-40 border-b border-[#ffd3c4] bg-white">
         <div className="mx-auto max-w-7xl px-4 py-3 sm:px-6">
           <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-              className="shrink-0 text-left"
-            >
-              <p className="text-xl font-black tracking-tight text-[#ff5c35]">
-                {siteAdi}
-              </p>
-              <p className="hidden text-xs font-medium text-zinc-500 sm:block">
-                Saten Buket & Hediyelik
-              </p>
-            </button>
+           <button
+  type="button"
+  onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+  className="shrink-0"
+>
+  <img
+    src="/neva-logo.png"
+    alt={siteAdi}
+    className="h-12 w-auto object-contain sm:h-14"
+  />
+</button>
 
             <div className="relative flex-1">
               <input
