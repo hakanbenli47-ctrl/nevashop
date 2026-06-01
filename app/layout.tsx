@@ -4,6 +4,10 @@ import "./globals.css";
 export const metadata: Metadata = {
   metadataBase: new URL("https://nevashop.tr"),
 
+  verification: {
+    google: "q3lyxYMbF0LZDoIsBVWyyEOIeSWCGFxdVpKV1K2FWFE",
+  },
+
   title: {
     default: "Neva Shop | Saten Buket ve Hediyelik Ürünler",
     template: "%s | Neva Shop",
