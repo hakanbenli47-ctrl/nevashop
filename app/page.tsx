@@ -185,9 +185,9 @@ Adet: 1
     <main className="flex min-h-screen items-center justify-center bg-[#fff7f2] text-zinc-900">
       <div className="rounded-3xl bg-white px-10 py-8 text-center shadow-sm">
         <img
-          src="/neva-logo.png"
+          src="/neva-logo-yeni.jpg"
           alt={siteAdi}
-          className="mx-auto h-24 w-auto object-contain sm:h-28"
+          className="mx-auto h-32 w-32 rounded-full object-cover sm:h-36 sm:w-36"
         />
 
        <p className="mt-4 text-sm font-semibold text-zinc-500">
@@ -209,9 +209,9 @@ Adet: 1
   className="shrink-0"
 >
   <img
-    src="/neva-logo.png"
+    src="/neva-logo-yeni.jpg"
     alt={siteAdi}
-    className="h-12 w-auto object-contain sm:h-14"
+    className="h-16 w-16 rounded-full object-cover sm:h-20 sm:w-20"
   />
 </button>
 
