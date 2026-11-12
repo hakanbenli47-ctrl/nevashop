@@ -195,7 +195,6 @@ export default function AnaSayfa() {
     });
 
     setSeciliUrun(null);
-    setSepetAcik(true);
   };
 
   const sepetAdetDegistir = (urunId: string, yeniAdet: number) => {
@@ -534,6 +533,10 @@ Mağaza: ${magazLinki}`;
                   fiyatFormatla={fiyatFormatla}
                   urunDetayAc={urunDetayAc}
                   sepeteEkle={sepeteEkle}
+                  sepettekiAdet={
+                    sepet.find((item) => item.urun.id === urun.id)?.adet || 0
+                  }
+                  sepetAdetDegistir={sepetAdetDegistir}
                 />
               ))}
             </div>
@@ -565,6 +568,10 @@ Mağaza: ${magazLinki}`;
                   fiyatFormatla={fiyatFormatla}
                   urunDetayAc={urunDetayAc}
                   sepeteEkle={sepeteEkle}
+                  sepettekiAdet={
+                    sepet.find((item) => item.urun.id === urun.id)?.adet || 0
+                  }
+                  sepetAdetDegistir={sepetAdetDegistir}
                 />
               ))}
             </div>
@@ -662,11 +669,15 @@ function UrunKarti({
   fiyatFormatla,
   urunDetayAc,
   sepeteEkle,
+  sepettekiAdet,
+  sepetAdetDegistir,
 }: {
   urun: UrunKart;
   fiyatFormatla: (fiyat: number) => string;
   urunDetayAc: (urun: UrunKart) => void;
   sepeteEkle: (urun: UrunKart) => void;
+  sepettekiAdet: number;
+  sepetAdetDegistir: (urunId: string, yeniAdet: number) => void;
 }) {
   const anaGorsel = urun.fotograflar[0]?.fotograf_url;
 
@@ -735,14 +746,45 @@ function UrunKarti({
           İncele
         </button>
 
-        <button
-          type="button"
-          onClick={() => sepeteEkle(urun)}
-          disabled={urun.stok <= 0}
-          className="rounded-xl bg-[#ff5c35] px-3 py-2 text-xs font-black text-white transition hover:bg-[#e64a28] disabled:opacity-50"
-        >
-          {urun.stok <= 0 ? "Yok" : "Sepete Ekle"}
-        </button>
+        {sepettekiAdet > 0 ? (
+          <div className="flex items-center justify-between overflow-hidden rounded-xl border border-[#ff5c35] bg-white">
+            <button
+              type="button"
+              onClick={() =>
+                sepetAdetDegistir(urun.id, sepettekiAdet - 1)
+              }
+              className="h-full min-w-9 bg-[#fff0e8] px-2 text-base font-black text-[#8a3a26] transition hover:bg-[#ffe1d6]"
+              aria-label={`${urun.ad} adet azalt`}
+            >
+              −
+            </button>
+
+            <span className="px-2 text-xs font-black text-[#ff5c35]">
+              {sepettekiAdet}
+            </span>
+
+            <button
+              type="button"
+              onClick={() =>
+                sepetAdetDegistir(urun.id, sepettekiAdet + 1)
+              }
+              disabled={sepettekiAdet >= urun.stok}
+              className="h-full min-w-9 bg-[#ff5c35] px-2 text-base font-black text-white transition hover:bg-[#e64a28] disabled:opacity-40"
+              aria-label={`${urun.ad} adet artır`}
+            >
+              +
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => sepeteEkle(urun)}
+            disabled={urun.stok <= 0}
+            className="rounded-xl bg-[#ff5c35] px-3 py-2 text-xs font-black text-white transition hover:bg-[#e64a28] disabled:opacity-50"
+          >
+            {urun.stok <= 0 ? "Yok" : "Sepete Ekle"}
+          </button>
+        )}
       </div>
     </article>
   );
