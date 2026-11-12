@@ -42,6 +42,11 @@ type UrunKart = Urun & {
   fotograflar: UrunFotografi[];
 };
 
+type SepetUrunu = {
+  urun: UrunKart;
+  adet: number;
+};
+
 export default function AnaSayfa() {
   const [siteAyari, setSiteAyari] = useState<SiteAyari | null>(null);
   const [kategoriler, setKategoriler] = useState<Kategori[]>([]);
@@ -51,7 +56,9 @@ export default function AnaSayfa() {
   const [seciliUrun, setSeciliUrun] = useState<UrunKart | null>(null);
   const [aktifGorsel, setAktifGorsel] = useState("");
   const [yukleniyor, setYukleniyor] = useState(true);
-  const [siparisOlusturuluyor, setSiparisOlusturuluyor] = useState("");
+  const [sepet, setSepet] = useState<SepetUrunu[]>([]);
+  const [sepetAcik, setSepetAcik] = useState(false);
+  const [siparisOlusturuluyor, setSiparisOlusturuluyor] = useState(false);
 
   useEffect(() => {
     verileriGetir();
@@ -139,45 +146,138 @@ export default function AnaSayfa() {
   const heroUrunler =
     oneCikanUrunler.length > 0 ? oneCikanUrunler : urunler.slice(0, 4);
 
+  const sepetAdedi = useMemo(
+    () => sepet.reduce((toplam, item) => toplam + item.adet, 0),
+    [sepet]
+  );
+
+  const sepetToplami = useMemo(
+    () =>
+      sepet.reduce(
+        (toplam, item) => toplam + item.urun.fiyat * item.adet,
+        0
+      ),
+    [sepet]
+  );
+
   const urunDetayAc = (urun: UrunKart) => {
     setSeciliUrun(urun);
     setAktifGorsel(urun.fotograflar[0]?.fotograf_url || "");
   };
 
-  const siparisOlusturVeWhatsAppAc = async (urun: UrunKart) => {
+  const sepeteEkle = (urun: UrunKart) => {
     if (urun.stok <= 0) {
       alert("Bu ürün şu anda stokta yok.");
       return;
     }
 
-    setSiparisOlusturuluyor(urun.id);
+    const mevcutUrun = sepet.find((item) => item.urun.id === urun.id);
 
-    const urunLinki =
-      typeof window !== "undefined"
-        ? `${window.location.origin}/?urun=${urun.slug}`
-        : "";
+    if (mevcutUrun && mevcutUrun.adet >= urun.stok) {
+      alert("Sepetteki adet mevcut stoğa ulaştı.");
+      setSeciliUrun(null);
+      setSepetAcik(true);
+      return;
+    }
 
-    const mesaj = `Merhaba ${siteAdi}, bu ürünü sipariş vermek istiyorum.
+    setSepet((mevcut) => {
+      const bulunan = mevcut.find((item) => item.urun.id === urun.id);
 
-Ürün: ${urun.ad}
-Fiyat: ${fiyatFormatla(urun.fiyat)}
-Adet: 1
-Ürün Linki: ${urunLinki}`;
+      if (bulunan) {
+        return mevcut.map((item) =>
+          item.urun.id === urun.id
+            ? { ...item, adet: item.adet + 1 }
+            : item
+        );
+      }
 
-    await supabase.from("siparisler").insert({
-      urun_id: urun.id,
-      urun_adi: urun.ad,
-      adet: 1,
+      return [...mevcut, { urun, adet: 1 }];
+    });
+
+    setSeciliUrun(null);
+    setSepetAcik(true);
+  };
+
+  const sepetAdetDegistir = (urunId: string, yeniAdet: number) => {
+    setSepet((mevcut) =>
+      mevcut
+        .map((item) => {
+          if (item.urun.id !== urunId) return item;
+
+          const guvenliAdet = Math.min(yeniAdet, item.urun.stok);
+          return { ...item, adet: guvenliAdet };
+        })
+        .filter((item) => item.adet > 0)
+    );
+  };
+
+  const sepettenCikar = (urunId: string) => {
+    setSepet((mevcut) =>
+      mevcut.filter((item) => item.urun.id !== urunId)
+    );
+  };
+
+  const sepetiWhatsAppaAktar = async () => {
+    if (sepet.length === 0 || siparisOlusturuluyor) return;
+
+    const whatsappPenceresi = window.open("about:blank", "_blank");
+    setSiparisOlusturuluyor(true);
+
+    const urunSatirlari = sepet
+      .map(
+        (item, index) =>
+          `${index + 1}. ${item.urun.ad}
+Adet: ${item.adet}
+Birim Fiyat: ${fiyatFormatla(item.urun.fiyat)}
+Ara Toplam: ${fiyatFormatla(item.urun.fiyat * item.adet)}`
+      )
+      .join("\n\n");
+
+    const magazLinki =
+      typeof window !== "undefined" ? window.location.origin : "";
+
+    const mesaj = `Merhaba ${siteAdi}, aşağıdaki ürünleri sipariş vermek istiyorum.
+
+${urunSatirlari}
+
+Toplam: ${fiyatFormatla(sepetToplami)}
+Mağaza: ${magazLinki}`;
+
+    const siparisKayitlari = sepet.map((item) => ({
+      urun_id: item.urun.id,
+      urun_adi: item.urun.ad,
+      adet: item.adet,
       durum: "bekliyor",
       whatsapp_mesaji: mesaj,
-    });
+    }));
+
+    const { error } = await supabase
+      .from("siparisler")
+      .insert(siparisKayitlari);
+
+    if (error) {
+      console.error("Sipariş kaydı oluşturulamadı:", error);
+      whatsappPenceresi?.close();
+      alert(
+        "Sipariş admin paneline kaydedilemedi. Lütfen tekrar deneyin."
+      );
+      setSiparisOlusturuluyor(false);
+      return;
+    }
 
     const whatsappLink = `https://wa.me/${whatsappNumarasi}?text=${encodeURIComponent(
       mesaj
     )}`;
 
-    setSiparisOlusturuluyor("");
-    window.open(whatsappLink, "_blank");
+    if (whatsappPenceresi) {
+      whatsappPenceresi.location.href = whatsappLink;
+    } else {
+      window.location.href = whatsappLink;
+    }
+
+    setSepet([]);
+    setSepetAcik(false);
+    setSiparisOlusturuluyor(false);
   };
 
  if (yukleniyor) {
@@ -202,7 +302,7 @@ Adet: 1
     <main className="min-h-screen bg-[#fff7f2] text-zinc-900">
       <header className="sticky top-0 z-40 border-b border-[#ffd3c4] bg-white">
         <div className="mx-auto max-w-7xl px-4 py-3 sm:px-6">
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
            <button
   type="button"
   onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
@@ -215,7 +315,7 @@ Adet: 1
   />
 </button>
 
-            <div className="relative flex-1">
+            <div className="relative order-3 w-full sm:order-none sm:flex-1">
               <input
                 value={arama}
                 onChange={(e) => setArama(e.target.value)}
@@ -234,6 +334,19 @@ Adet: 1
                 Ara
               </button>
             </div>
+
+            <button
+              type="button"
+              onClick={() => setSepetAcik(true)}
+              className="relative h-11 shrink-0 rounded-xl border border-[#ffd3c4] bg-white px-4 text-sm font-black text-zinc-900 transition hover:bg-[#fff0e8]"
+            >
+              Sepet
+              {sepetAdedi > 0 && (
+                <span className="absolute -right-2 -top-2 flex h-6 min-w-6 items-center justify-center rounded-full bg-[#ff5c35] px-1.5 text-[11px] font-black text-white shadow">
+                  {sepetAdedi}
+                </span>
+              )}
+            </button>
 
             <a
               href={`https://wa.me/${whatsappNumarasi}`}
@@ -420,8 +533,7 @@ Adet: 1
                   urun={urun}
                   fiyatFormatla={fiyatFormatla}
                   urunDetayAc={urunDetayAc}
-                  siparisOlusturVeWhatsAppAc={siparisOlusturVeWhatsAppAc}
-                  siparisOlusturuluyor={siparisOlusturuluyor}
+                  sepeteEkle={sepeteEkle}
                 />
               ))}
             </div>
@@ -452,8 +564,7 @@ Adet: 1
                   urun={urun}
                   fiyatFormatla={fiyatFormatla}
                   urunDetayAc={urunDetayAc}
-                  siparisOlusturVeWhatsAppAc={siparisOlusturVeWhatsAppAc}
-                  siparisOlusturuluyor={siparisOlusturuluyor}
+                  sepeteEkle={sepeteEkle}
                 />
               ))}
             </div>
@@ -497,6 +608,19 @@ Adet: 1
         WhatsApp
       </a>
 
+      {sepetAcik && (
+        <SepetModal
+          sepet={sepet}
+          kapat={() => setSepetAcik(false)}
+          fiyatFormatla={fiyatFormatla}
+          sepetToplami={sepetToplami}
+          adetDegistir={sepetAdetDegistir}
+          sepettenCikar={sepettenCikar}
+          siparisiTamamla={sepetiWhatsAppaAktar}
+          siparisOlusturuluyor={siparisOlusturuluyor}
+        />
+      )}
+
       {seciliUrun && (
         <UrunDetayModal
           urun={seciliUrun}
@@ -504,8 +628,7 @@ Adet: 1
           setAktifGorsel={setAktifGorsel}
           kapat={() => setSeciliUrun(null)}
           fiyatFormatla={fiyatFormatla}
-          siparisOlusturVeWhatsAppAc={siparisOlusturVeWhatsAppAc}
-          siparisOlusturuluyor={siparisOlusturuluyor}
+          sepeteEkle={sepeteEkle}
         />
       )}
     </main>
@@ -538,14 +661,12 @@ function UrunKarti({
   urun,
   fiyatFormatla,
   urunDetayAc,
-  siparisOlusturVeWhatsAppAc,
-  siparisOlusturuluyor,
+  sepeteEkle,
 }: {
   urun: UrunKart;
   fiyatFormatla: (fiyat: number) => string;
   urunDetayAc: (urun: UrunKart) => void;
-  siparisOlusturVeWhatsAppAc: (urun: UrunKart) => void;
-  siparisOlusturuluyor: string;
+  sepeteEkle: (urun: UrunKart) => void;
 }) {
   const anaGorsel = urun.fotograflar[0]?.fotograf_url;
 
@@ -616,15 +737,11 @@ function UrunKarti({
 
         <button
           type="button"
-          onClick={() => siparisOlusturVeWhatsAppAc(urun)}
-          disabled={urun.stok <= 0 || siparisOlusturuluyor === urun.id}
+          onClick={() => sepeteEkle(urun)}
+          disabled={urun.stok <= 0}
           className="rounded-xl bg-[#ff5c35] px-3 py-2 text-xs font-black text-white transition hover:bg-[#e64a28] disabled:opacity-50"
         >
-          {urun.stok <= 0
-            ? "Yok"
-            : siparisOlusturuluyor === urun.id
-            ? "Açılıyor"
-            : "Sipariş"}
+          {urun.stok <= 0 ? "Yok" : "Sepete Ekle"}
         </button>
       </div>
     </article>
@@ -637,16 +754,14 @@ function UrunDetayModal({
   setAktifGorsel,
   kapat,
   fiyatFormatla,
-  siparisOlusturVeWhatsAppAc,
-  siparisOlusturuluyor,
+  sepeteEkle,
 }: {
   urun: UrunKart;
   aktifGorsel: string;
   setAktifGorsel: (url: string) => void;
   kapat: () => void;
   fiyatFormatla: (fiyat: number) => string;
-  siparisOlusturVeWhatsAppAc: (urun: UrunKart) => void;
-  siparisOlusturuluyor: string;
+  sepeteEkle: (urun: UrunKart) => void;
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 px-3 py-5">
@@ -737,17 +852,11 @@ function UrunDetayModal({
 
               <button
                 type="button"
-                onClick={() => siparisOlusturVeWhatsAppAc(urun)}
-                disabled={
-                  urun.stok <= 0 || siparisOlusturuluyor === urun.id
-                }
+                onClick={() => sepeteEkle(urun)
+                disabled={urun.stok <= 0}
                 className="mt-5 w-full rounded-xl bg-[#ff5c35] px-6 py-4 text-sm font-black text-white transition hover:bg-[#e64a28] disabled:opacity-50"
               >
-                {urun.stok <= 0
-                  ? "Stokta Yok"
-                  : siparisOlusturuluyor === urun.id
-                  ? "WhatsApp Açılıyor..."
-                  : "WhatsApp’tan Sipariş Ver"}
+                {urun.stok <= 0 ? "Stokta Yok" : "Sepete Ekle"}
               </button>
 
               <p className="mt-3 text-center text-xs leading-5 text-zinc-500">
@@ -776,6 +885,176 @@ function UrunDetayModal({
               </div>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SepetModal({
+  sepet,
+  kapat,
+  fiyatFormatla,
+  sepetToplami,
+  adetDegistir,
+  sepettenCikar,
+  siparisiTamamla,
+  siparisOlusturuluyor,
+}: {
+  sepet: SepetUrunu[];
+  kapat: () => void;
+  fiyatFormatla: (fiyat: number) => string;
+  sepetToplami: number;
+  adetDegistir: (urunId: string, yeniAdet: number) => void;
+  sepettenCikar: (urunId: string) => void;
+  siparisiTamamla: () => void;
+  siparisOlusturuluyor: boolean;
+}) {
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/55 px-3 py-5">
+      <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[#ffe1d6] bg-white px-4 py-3">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.16em] text-[#ff5c35]">
+              Sepetim
+            </p>
+            <h2 className="mt-1 text-lg font-black text-zinc-950">
+              Sipariş özeti
+            </h2>
+          </div>
+
+          <button
+            type="button"
+            onClick={kapat}
+            className="rounded-xl bg-[#fff0e8] px-4 py-2 text-sm font-black text-[#8a3a26]"
+          >
+            Kapat
+          </button>
+        </div>
+
+        <div className="p-4 sm:p-5">
+          {sepet.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-[#ffd3c4] bg-[#fff7f2] p-8 text-center">
+              <h3 className="text-lg font-black text-zinc-900">
+                Sepetin şu anda boş
+              </h3>
+              <p className="mt-2 text-sm text-zinc-500">
+                Ürünlerden “Sepete Ekle” diyerek siparişini hazırlayabilirsin.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="space-y-3">
+                {sepet.map((item) => {
+                  const gorsel = item.urun.fotograflar[0]?.fotograf_url;
+
+                  return (
+                    <div
+                      key={item.urun.id}
+                      className="flex gap-3 rounded-2xl border border-[#ffe1d6] p-3"
+                    >
+                      <div className="h-24 w-20 shrink-0 overflow-hidden rounded-xl bg-[#fff7f2]">
+                        {gorsel ? (
+                          <img
+                            src={gorsel}
+                            alt={item.urun.ad}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-full items-center justify-center text-[10px] text-zinc-400">
+                            Görsel yok
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <h3 className="line-clamp-2 text-sm font-black text-zinc-900">
+                          {item.urun.ad}
+                        </h3>
+
+                        <p className="mt-1 text-sm font-black text-[#ff5c35]">
+                          {fiyatFormatla(item.urun.fiyat)}
+                        </p>
+
+                        <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                adetDegistir(item.urun.id, item.adet - 1)
+                              }
+                              className="h-8 w-8 rounded-lg bg-[#fff0e8] text-base font-black text-[#8a3a26]"
+                            >
+                              −
+                            </button>
+
+                            <span className="min-w-8 text-center text-sm font-black">
+                              {item.adet}
+                            </span>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                adetDegistir(item.urun.id, item.adet + 1)
+                              }
+                              disabled={item.adet >= item.urun.stok}
+                              className="h-8 w-8 rounded-lg bg-[#fff0e8] text-base font-black text-[#8a3a26] disabled:opacity-40"
+                            >
+                              +
+                            </button>
+                          </div>
+
+                          <div className="text-right">
+                            <p className="text-xs font-semibold text-zinc-400">
+                              Ara toplam
+                            </p>
+                            <p className="text-sm font-black text-zinc-900">
+                              {fiyatFormatla(item.urun.fiyat * item.adet)}
+                            </p>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => sepettenCikar(item.urun.id)}
+                          className="mt-3 text-xs font-bold text-red-600"
+                        >
+                          Sepetten çıkar
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="mt-5 rounded-2xl bg-[#fff7f2] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm font-bold text-zinc-500">
+                    Toplam
+                  </span>
+                  <span className="text-2xl font-black text-[#ff5c35]">
+                    {fiyatFormatla(sepetToplami)}
+                  </span>
+                </div>
+
+                <p className="mt-2 text-xs leading-5 text-zinc-500">
+                  Sipariş gönderildiğinde ürünler admin paneline “Bekliyor”
+                  olarak düşer. Onaylandığında stoktan ilgili adet kadar düşülür.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={siparisiTamamla}
+                disabled={siparisOlusturuluyor}
+                className="mt-4 w-full rounded-xl bg-[#25D366] px-6 py-4 text-sm font-black text-white transition hover:brightness-95 disabled:opacity-50"
+              >
+                {siparisOlusturuluyor
+                  ? "Sipariş Kaydediliyor..."
+                  : "WhatsApp’tan Sipariş Ver"}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>
