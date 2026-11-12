@@ -852,7 +852,7 @@ function UrunDetayModal({
 
               <button
                 type="button"
-                onClick={() => sepeteEkle(urun)
+                onClick={() => sepeteEkle(urun)}
                 disabled={urun.stok <= 0}
                 className="mt-5 w-full rounded-xl bg-[#ff5c35] px-6 py-4 text-sm font-black text-white transition hover:bg-[#e64a28] disabled:opacity-50"
               >
