@@ -11,6 +11,8 @@ type Kategori = {
   aktif: boolean;
 };
 
+const ODEME_AYAR_SLUG = "neva-odeme-ayarlari-sistem";
+
 function slugOlustur(metin: string) {
   return metin
     .toLowerCase()
@@ -42,7 +44,9 @@ export default function KategorilerSayfasi() {
       .select("id, ad, slug, aktif")
       .order("ad", { ascending: true });
 
-    setKategoriler(data || []);
+    setKategoriler(
+      (data || []).filter((kategori) => kategori.slug !== ODEME_AYAR_SLUG)
+    );
   };
 
   const kategoriEkle = async (e: React.FormEvent) => {
