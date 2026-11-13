@@ -9,9 +9,9 @@ type SiteAyari = {
   site_adi: string | null;
   telefon: string | null;
   whatsapp: string | null;
-  hesap_sahibi?: string | null;
-  iban?: string | null;
 };
+
+const ODEME_AYAR_SLUG = "neva-odeme-ayarlari-sistem";
 
 export default function SiteAyarlariSayfasi() {
   const router = useRouter();
@@ -54,14 +54,24 @@ export default function SiteAyarlariSayfasi() {
     setWhatsapp(ayar.whatsapp || "");
 
     const { data: bankaData } = await supabase
-      .from("site_ayarlari")
-      .select("hesap_sahibi, iban")
-      .eq("id", ayar.id)
+      .from("kategoriler")
+      .select("id, ad")
+      .eq("slug", ODEME_AYAR_SLUG)
       .maybeSingle();
 
-    if (bankaData) {
-      setHesapSahibi(bankaData.hesap_sahibi || "");
-      setIban(bankaData.iban || "");
+    if (bankaData?.ad) {
+      try {
+        const bankaBilgisi = JSON.parse(bankaData.ad) as {
+          hesap_sahibi?: string;
+          iban?: string;
+        };
+
+        setHesapSahibi(bankaBilgisi.hesap_sahibi || "");
+        setIban(bankaBilgisi.iban || "");
+      } catch {
+        setHesapSahibi("");
+        setIban("");
+      }
     }
 
     setSayfaYukleniyor(false);
@@ -87,13 +97,29 @@ export default function SiteAyarlariSayfasi() {
       return;
     }
 
-    const { error: bankaHatasi } = await supabase
-      .from("site_ayarlari")
-      .update({
-        hesap_sahibi: hesapSahibi.trim(),
-        iban: iban.replace(/\s+/g, "").toUpperCase(),
-      })
-      .eq("id", ayarId);
+    const bankaKaydi = JSON.stringify({
+      hesap_sahibi: hesapSahibi.trim(),
+      iban: iban.replace(/\s+/g, "").toUpperCase(),
+    });
+
+    const { data: mevcutBankaKaydi } = await supabase
+      .from("kategoriler")
+      .select("id")
+      .eq("slug", ODEME_AYAR_SLUG)
+      .maybeSingle();
+
+    const bankaIslemi = mevcutBankaKaydi?.id
+      ? supabase
+          .from("kategoriler")
+          .update({ ad: bankaKaydi, aktif: false })
+          .eq("id", mevcutBankaKaydi.id)
+      : supabase.from("kategoriler").insert({
+          ad: bankaKaydi,
+          slug: ODEME_AYAR_SLUG,
+          aktif: false,
+        });
+
+    const { error: bankaHatasi } = await bankaIslemi;
 
     if (bankaHatasi) {
       setMesaj(
