@@ -111,12 +111,12 @@ export default function SiteAyarlariSayfasi() {
     const bankaIslemi = mevcutBankaKaydi?.id
       ? supabase
           .from("kategoriler")
-          .update({ ad: bankaKaydi, aktif: false })
+          .update({ ad: bankaKaydi, aktif: true })
           .eq("id", mevcutBankaKaydi.id)
       : supabase.from("kategoriler").insert({
           ad: bankaKaydi,
           slug: ODEME_AYAR_SLUG,
-          aktif: false,
+          aktif: true,
         });
 
     const { error: bankaHatasi } = await bankaIslemi;
