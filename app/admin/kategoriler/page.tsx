@@ -45,7 +45,11 @@ export default function KategorilerSayfasi() {
       .order("ad", { ascending: true });
 
     setKategoriler(
-      (data || []).filter((kategori) => kategori.slug !== ODEME_AYAR_SLUG)
+      (data || []).filter(
+        (kategori) =>
+          kategori.slug !== ODEME_AYAR_SLUG &&
+          !kategori.slug.startsWith("neva-sistem-")
+      )
     );
   };
 
