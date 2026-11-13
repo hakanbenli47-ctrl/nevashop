@@ -145,6 +145,7 @@ export default function AnaSayfa() {
       .from("kategoriler")
       .select("id, ad, slug")
       .eq("aktif", true)
+      .neq("slug", ODEME_AYAR_SLUG)
       .order("ad", { ascending: true });
 
     const { data: urunData } = await supabase
@@ -173,6 +174,7 @@ export default function AnaSayfa() {
       .from("kategoriler")
       .select("ad")
       .eq("slug", ODEME_AYAR_SLUG)
+      .eq("aktif", true)
       .maybeSingle();
 
     if (bankaKaydi?.ad) {
