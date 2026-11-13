@@ -13,11 +13,36 @@ type Siparis = {
   musteri_telefon: string | null;
   durum: string;
   whatsapp_mesaji: string | null;
-  odeme_yontemi?: string | null;
-  dekont_path?: string | null;
-  siparis_grup_id?: string | null;
   created_at: string;
 };
+
+type SiparisMeta = {
+  v: number;
+  mesaj: string;
+  odeme_yontemi: "havale";
+  siparis_kodu: string;
+  dekont_data_url?: string | null;
+};
+
+const SIPARIS_META_PREFIX = "__NEVA_SIPARIS_V1__";
+
+function utf8Base64Decode(value: string) {
+  const binary = atob(value);
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
+function siparisMetaOku(value: string | null): SiparisMeta | null {
+  if (!value?.startsWith(SIPARIS_META_PREFIX)) return null;
+
+  try {
+    return JSON.parse(
+      utf8Base64Decode(value.slice(SIPARIS_META_PREFIX.length))
+    ) as SiparisMeta;
+  } catch {
+    return null;
+  }
+}
 
 type Urun = {
   id: string;
@@ -41,7 +66,9 @@ export default function SiparislerSayfasi() {
 
     const { data, error } = await supabase
       .from("siparisler")
-      .select("*")
+      .select(
+        "id, urun_id, urun_adi, adet, musteri_ad, musteri_telefon, durum, whatsapp_mesaji, created_at"
+      )
       .order("created_at", { ascending: false });
 
     if (!error) {
@@ -176,24 +203,24 @@ export default function SiparislerSayfasi() {
     siparisleriGetir();
   };
 
-  const dekontAc = async (siparis: Siparis) => {
-    if (!siparis.dekont_path) return;
+  const dekontAc = (siparis: Siparis) => {
+    const meta = siparisMetaOku(siparis.whatsapp_mesaji);
 
-    setMesaj("");
-    setIslemYapiliyor(siparis.id);
-
-    const { data, error } = await supabase.storage
-      .from("dekontlar")
-      .createSignedUrl(siparis.dekont_path, 600);
-
-    setIslemYapiliyor("");
-
-    if (error || !data?.signedUrl) {
-      setMesaj("Dekont görüntülenemedi.");
+    if (!meta?.dekont_data_url) {
+      setMesaj("Bu sipariş için dekont bulunamadı.");
       return;
     }
 
-    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+    const yeniPencere = window.open("", "_blank", "noopener,noreferrer");
+    if (!yeniPencere) {
+      setMesaj("Dekont penceresi açılamadı.");
+      return;
+    }
+
+    yeniPencere.document.write(
+      `<html><head><title>${meta.siparis_kodu}</title></head><body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${meta.dekont_data_url}" alt="Dekont" style="max-width:100%;max-height:100vh;object-fit:contain"/></body></html>`
+    );
+    yeniPencere.document.close();
   };
 
   const durumEtiketi = (durum: string) => {
@@ -309,25 +336,40 @@ export default function SiparislerSayfasi() {
                         Tarih: {tarihFormatla(siparis.created_at)}
                       </p>
 
-                      <p className="mt-1 text-sm text-zinc-500">
-                        Ödeme:{" "}
-                        <strong>
-                          {siparis.odeme_yontemi === "havale"
-                            ? "Havale / EFT"
-                            : "WhatsApp"}
-                        </strong>
-                      </p>
+                      {(() => {
+                        const meta = siparisMetaOku(siparis.whatsapp_mesaji);
+                        const havaleMi =
+                          siparis.durum === "odeme_kontrolu" ||
+                          meta?.odeme_yontemi === "havale";
 
-                      {siparis.dekont_path && (
-                        <button
-                          type="button"
-                          onClick={() => dekontAc(siparis)}
-                          disabled={islemYapiliyor === siparis.id}
-                          className="mt-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 transition hover:bg-blue-100 disabled:opacity-50"
-                        >
-                          Dekontu Görüntüle
-                        </button>
-                      )}
+                        return (
+                          <>
+                            <p className="mt-1 text-sm text-zinc-500">
+                              Ödeme:{" "}
+                              <strong>
+                                {havaleMi ? "Havale / EFT" : "WhatsApp"}
+                              </strong>
+                            </p>
+
+                            {meta?.siparis_kodu && (
+                              <p className="mt-1 text-sm text-zinc-500">
+                                Sipariş Kodu:{" "}
+                                <strong>{meta.siparis_kodu}</strong>
+                              </p>
+                            )}
+
+                            {meta?.dekont_data_url && (
+                              <button
+                                type="button"
+                                onClick={() => dekontAc(siparis)}
+                                className="mt-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 transition hover:bg-blue-100"
+                              >
+                                Dekontu Görüntüle
+                              </button>
+                            )}
+                          </>
+                        );
+                      })()}
 
                       {siparis.musteri_ad && (
                         <p className="mt-1 text-sm text-zinc-500">
@@ -347,7 +389,8 @@ export default function SiparislerSayfasi() {
                             WhatsApp Mesajı
                           </p>
                           <p className="mt-2 whitespace-pre-line text-sm leading-6 text-zinc-700">
-                            {siparis.whatsapp_mesaji}
+                            {siparisMetaOku(siparis.whatsapp_mesaji)?.mesaj ||
+                              siparis.whatsapp_mesaji}
                           </p>
                         </div>
                       )}
