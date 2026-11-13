@@ -13,6 +13,9 @@ type Siparis = {
   musteri_telefon: string | null;
   durum: string;
   whatsapp_mesaji: string | null;
+  odeme_yontemi?: string | null;
+  dekont_path?: string | null;
+  siparis_grup_id?: string | null;
   created_at: string;
 };
 
@@ -38,9 +41,7 @@ export default function SiparislerSayfasi() {
 
     const { data, error } = await supabase
       .from("siparisler")
-      .select(
-        "id, urun_id, urun_adi, adet, musteri_ad, musteri_telefon, durum, whatsapp_mesaji, created_at"
-      )
+      .select("*")
       .order("created_at", { ascending: false });
 
     if (!error) {
@@ -175,6 +176,26 @@ export default function SiparislerSayfasi() {
     siparisleriGetir();
   };
 
+  const dekontAc = async (siparis: Siparis) => {
+    if (!siparis.dekont_path) return;
+
+    setMesaj("");
+    setIslemYapiliyor(siparis.id);
+
+    const { data, error } = await supabase.storage
+      .from("dekontlar")
+      .createSignedUrl(siparis.dekont_path, 600);
+
+    setIslemYapiliyor("");
+
+    if (error || !data?.signedUrl) {
+      setMesaj("Dekont görüntülenemedi.");
+      return;
+    }
+
+    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+  };
+
   const durumEtiketi = (durum: string) => {
     if (durum === "onaylandi") {
       return (
@@ -188,6 +209,14 @@ export default function SiparislerSayfasi() {
       return (
         <span className="rounded-full bg-red-50 px-3 py-1 text-xs font-semibold text-red-600">
           İptal
+        </span>
+      );
+    }
+
+    if (durum === "odeme_kontrolu") {
+      return (
+        <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
+          Ödeme Kontrolü
         </span>
       );
     }
@@ -216,7 +245,7 @@ export default function SiparislerSayfasi() {
               Siparişler
             </h1>
             <p className="mt-2 text-sm text-zinc-500">
-              WhatsApp’a yönlenen siparişleri buradan takip et, onayla ve stoktan düş.
+              WhatsApp ve Havale/EFT siparişlerini takip et, dekontu kontrol et ve stoktan düş.
             </p>
           </div>
 
@@ -279,6 +308,26 @@ export default function SiparislerSayfasi() {
                       <p className="mt-1 text-sm text-zinc-500">
                         Tarih: {tarihFormatla(siparis.created_at)}
                       </p>
+
+                      <p className="mt-1 text-sm text-zinc-500">
+                        Ödeme:{" "}
+                        <strong>
+                          {siparis.odeme_yontemi === "havale"
+                            ? "Havale / EFT"
+                            : "WhatsApp"}
+                        </strong>
+                      </p>
+
+                      {siparis.dekont_path && (
+                        <button
+                          type="button"
+                          onClick={() => dekontAc(siparis)}
+                          disabled={islemYapiliyor === siparis.id}
+                          className="mt-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 transition hover:bg-blue-100 disabled:opacity-50"
+                        >
+                          Dekontu Görüntüle
+                        </button>
+                      )}
 
                       {siparis.musteri_ad && (
                         <p className="mt-1 text-sm text-zinc-500">
