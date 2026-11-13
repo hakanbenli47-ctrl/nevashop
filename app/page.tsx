@@ -56,6 +56,63 @@ type OdemeBilgisi = {
   dekont: File | null;
 };
 
+const ODEME_AYAR_SLUG = "neva-odeme-ayarlari-sistem";
+const SIPARIS_META_PREFIX = "__NEVA_SIPARIS_V1__";
+
+function utf8Base64Encode(value: string) {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+  return btoa(binary);
+}
+
+async function dekontuSikistir(dosya: File) {
+  const veriUrl = await new Promise<string>((resolve, reject) => {
+    const okuyucu = new FileReader();
+    okuyucu.onload = () => resolve(String(okuyucu.result || ""));
+    okuyucu.onerror = () => reject(new Error("Dekont okunamadı."));
+    okuyucu.readAsDataURL(dosya);
+  });
+
+  const gorsel = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("Dekont görseli açılamadı."));
+    img.src = veriUrl;
+  });
+
+  const maksimumKenar = 1200;
+  const oran = Math.min(
+    1,
+    maksimumKenar / Math.max(gorsel.naturalWidth, gorsel.naturalHeight)
+  );
+
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(gorsel.naturalWidth * oran));
+  canvas.height = Math.max(1, Math.round(gorsel.naturalHeight * oran));
+
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Dekont işlenemedi.");
+
+  context.drawImage(gorsel, 0, 0, canvas.width, canvas.height);
+
+  let kalite = 0.72;
+  let sonuc = canvas.toDataURL("image/jpeg", kalite);
+
+  while (sonuc.length > 280000 && kalite > 0.38) {
+    kalite -= 0.08;
+    sonuc = canvas.toDataURL("image/jpeg", kalite);
+  }
+
+  if (sonuc.length > 360000) {
+    throw new Error("Dekont görseli çok büyük. Daha küçük bir görsel deneyin.");
+  }
+
+  return sonuc;
+}
+
 export default function AnaSayfa() {
   const [siteAyari, setSiteAyari] = useState<SiteAyari | null>(null);
   const [kategoriler, setKategoriler] = useState<Kategori[]>([]);
@@ -110,17 +167,20 @@ export default function AnaSayfa() {
       ),
     }));
 
-    let bankaData: { hesap_sahibi: string | null; iban: string | null } | null =
-      null;
+    let bankaData: { hesap_sahibi?: string; iban?: string } | null = null;
 
-    if (ayarData?.id) {
-      const { data } = await supabase
-        .from("site_ayarlari")
-        .select("hesap_sahibi, iban")
-        .eq("id", ayarData.id)
-        .maybeSingle();
+    const { data: bankaKaydi } = await supabase
+      .from("kategoriler")
+      .select("ad")
+      .eq("slug", ODEME_AYAR_SLUG)
+      .maybeSingle();
 
-      bankaData = data || null;
+    if (bankaKaydi?.ad) {
+      try {
+        bankaData = JSON.parse(bankaKaydi.ad);
+      } catch {
+        bankaData = null;
+      }
     }
 
     setSiteAyari(
@@ -273,72 +333,47 @@ export default function AnaSayfa() {
       return;
     }
 
-    if (dekont && dekont.size > 5 * 1024 * 1024) {
-      alert("Dekont dosyası en fazla 5 MB olabilir.");
+    if (dekont && !["image/jpeg", "image/png", "image/webp"].includes(dekont.type)) {
+      alert("Dekont JPG, PNG veya WEBP formatında olmalı.");
       return;
     }
 
-    const izinliDekontTurleri = [
-      "image/jpeg",
-      "image/png",
-      "image/webp",
-      "application/pdf",
-    ];
-
-    if (dekont && !izinliDekontTurleri.includes(dekont.type)) {
-      alert("Dekont JPG, PNG, WEBP veya PDF formatında olmalı.");
+    if (dekont && dekont.size > 8 * 1024 * 1024) {
+      alert("Dekont dosyası en fazla 8 MB olabilir.");
       return;
     }
 
     const whatsappPenceresi = window.open("about:blank", "_blank");
     setSiparisOlusturuluyor(true);
 
-    const urunSatirlari = sepet
-      .map(
-        (item, index) =>
-          `${index + 1}. ${item.urun.ad}
+    try {
+      const urunSatirlari = sepet
+        .map(
+          (item, index) =>
+            `${index + 1}. ${item.urun.ad}
 Adet: ${item.adet}
 Birim Fiyat: ${fiyatFormatla(item.urun.fiyat)}
 Ara Toplam: ${fiyatFormatla(item.urun.fiyat * item.adet)}`
-      )
-      .join("\n\n");
+        )
+        .join("\n\n");
 
-    const magazLinki =
-      typeof window !== "undefined" ? window.location.origin : "";
+      const magazLinki =
+        typeof window !== "undefined" ? window.location.origin : "";
 
-    const siparisGrupId = crypto.randomUUID();
-    let dekontPath: string | null = null;
+      const siparisKodu = `NEVA-${Date.now().toString().slice(-8)}`;
+      const dekontDataUrl =
+        havaleMi && dekont ? await dekontuSikistir(dekont) : null;
 
-    if (havaleMi && dekont) {
-      const uzanti = dekont.name.split(".").pop()?.toLowerCase() || "jpg";
-      dekontPath = `${siparisGrupId}/dekont.${uzanti}`;
-
-      const { error: dekontHatasi } = await supabase.storage
-        .from("dekontlar")
-        .upload(dekontPath, dekont, {
-          cacheControl: "3600",
-          upsert: false,
-          contentType: dekont.type,
-        });
-
-      if (dekontHatasi) {
-        console.error("Dekont yüklenemedi:", dekontHatasi);
-        whatsappPenceresi?.close();
-        alert("Dekont yüklenemedi. Lütfen tekrar deneyin.");
-        setSiparisOlusturuluyor(false);
-        return;
-      }
-    }
-
-    const odemeSatirlari = havaleMi
-      ? `Ödeme Yöntemi: Havale / EFT
+      const odemeSatirlari = havaleMi
+        ? `Ödeme Yöntemi: Havale / EFT
+Sipariş Kodu: ${siparisKodu}
 Müşteri: ${musteriAd.trim()}
 Telefon: ${musteriTelefon.trim()}
 Ödeme Durumu: Müşteri ödemeyi yaptığını bildirdi.
 Dekont: Sisteme yüklendi.`
-      : "Ödeme Yöntemi: WhatsApp";
+        : "Ödeme Yöntemi: WhatsApp";
 
-    const mesaj = `Merhaba ${siteAdi}, aşağıdaki ürünleri sipariş vermek istiyorum.
+      const mesaj = `Merhaba ${siteAdi}, aşağıdaki ürünleri sipariş vermek istiyorum.
 
 ${urunSatirlari}
 
@@ -346,56 +381,76 @@ Toplam: ${fiyatFormatla(sepetToplami)}
 ${odemeSatirlari}
 Mağaza: ${magazLinki}`;
 
-    const siparisKayitlari = sepet.map((item) =>
-      havaleMi
-        ? {
-            urun_id: item.urun.id,
-            urun_adi: item.urun.ad,
-            adet: item.adet,
-            musteri_ad: musteriAd.trim(),
-            musteri_telefon: musteriTelefon.trim(),
-            durum: "odeme_kontrolu",
-            whatsapp_mesaji: mesaj,
-            odeme_yontemi: "havale",
-            dekont_path: dekontPath,
-            siparis_grup_id: siparisGrupId,
-          }
-        : {
-            urun_id: item.urun.id,
-            urun_adi: item.urun.ad,
-            adet: item.adet,
-            durum: "bekliyor",
-            whatsapp_mesaji: mesaj,
-          }
-    );
+      const havaleMeta = havaleMi
+        ? SIPARIS_META_PREFIX +
+          utf8Base64Encode(
+            JSON.stringify({
+              v: 1,
+              mesaj,
+              odeme_yontemi: "havale",
+              siparis_kodu: siparisKodu,
+              dekont_data_url: dekontDataUrl,
+            })
+          )
+        : null;
 
-    const { error } = await supabase
-      .from("siparisler")
-      .insert(siparisKayitlari);
+      const siparisKayitlari = sepet.map((item) =>
+        havaleMi
+          ? {
+              urun_id: item.urun.id,
+              urun_adi: item.urun.ad,
+              adet: item.adet,
+              musteri_ad: musteriAd.trim(),
+              musteri_telefon: musteriTelefon.trim(),
+              durum: "odeme_kontrolu",
+              whatsapp_mesaji: havaleMeta,
+            }
+          : {
+              urun_id: item.urun.id,
+              urun_adi: item.urun.ad,
+              adet: item.adet,
+              durum: "bekliyor",
+              whatsapp_mesaji: mesaj,
+            }
+      );
 
-    if (error) {
-      console.error("Sipariş kaydı oluşturulamadı:", error);
+      const { error } = await supabase
+        .from("siparisler")
+        .insert(siparisKayitlari);
+
+      if (error) {
+        console.error("Sipariş kaydı oluşturulamadı:", error);
+        whatsappPenceresi?.close();
+        alert(
+          "Sipariş admin paneline kaydedilemedi. Lütfen tekrar deneyin."
+        );
+        setSiparisOlusturuluyor(false);
+        return;
+      }
+
+      const whatsappLink = `https://wa.me/${whatsappNumarasi}?text=${encodeURIComponent(
+        mesaj
+      )}`;
+
+      if (whatsappPenceresi) {
+        whatsappPenceresi.location.href = whatsappLink;
+      } else {
+        window.location.href = whatsappLink;
+      }
+
+      setSepet([]);
+      setSepetAcik(false);
+      setSiparisOlusturuluyor(false);
+    } catch (error) {
+      console.error("Havale/EFT işlemi tamamlanamadı:", error);
       whatsappPenceresi?.close();
       alert(
-        "Sipariş admin paneline kaydedilemedi. Lütfen tekrar deneyin."
+        error instanceof Error
+          ? error.message
+          : "Sipariş hazırlanırken bir hata oluştu."
       );
       setSiparisOlusturuluyor(false);
-      return;
     }
-
-    const whatsappLink = `https://wa.me/${whatsappNumarasi}?text=${encodeURIComponent(
-      mesaj
-    )}`;
-
-    if (whatsappPenceresi) {
-      whatsappPenceresi.location.href = whatsappLink;
-    } else {
-      window.location.href = whatsappLink;
-    }
-
-    setSepet([]);
-    setSepetAcik(false);
-    setSiparisOlusturuluyor(false);
   };
 
  if (yukleniyor) {
@@ -1346,12 +1401,12 @@ function SepetModal({
                     </label>
                     <input
                       type="file"
-                      accept="image/jpeg,image/png,image/webp,application/pdf"
+                      accept="image/jpeg,image/png,image/webp"
                       onChange={(e) => setDekont(e.target.files?.[0] || null)}
                       className="block w-full rounded-xl border border-dashed border-zinc-300 bg-white px-3 py-3 text-xs text-zinc-600 file:mr-3 file:rounded-lg file:border-0 file:bg-[#fff0e8] file:px-3 file:py-2 file:text-xs file:font-black file:text-[#8a3a26]"
                     />
                     <p className="mt-2 text-[11px] leading-5 text-zinc-400">
-                      JPG, PNG, WEBP veya PDF. En fazla 5 MB.
+                      JPG, PNG veya WEBP. Görsel sipariş kaydına güvenli biçimde eklenir.
                     </p>
                   </div>
 
