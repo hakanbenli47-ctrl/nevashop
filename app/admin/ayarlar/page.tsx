@@ -13,6 +13,16 @@ type SiteAyari = {
 
 const ODEME_AYAR_SLUG = "neva-odeme-ayarlari-sistem";
 
+const YASAL_SLUGLAR = {
+  unvan: "neva-sistem-yasal-unvan",
+  adres: "neva-sistem-yasal-adres",
+  email: "neva-sistem-yasal-email",
+  mersis: "neva-sistem-yasal-mersis",
+  vergi: "neva-sistem-yasal-vergi",
+  kargo: "neva-sistem-yasal-kargo-ucreti",
+  iadeKargo: "neva-sistem-yasal-iade-kargo",
+} as const;
+
 export default function SiteAyarlariSayfasi() {
   const router = useRouter();
 
@@ -22,6 +32,13 @@ export default function SiteAyarlariSayfasi() {
   const [whatsapp, setWhatsapp] = useState("");
   const [hesapSahibi, setHesapSahibi] = useState("");
   const [iban, setIban] = useState("");
+  const [saticiUnvan, setSaticiUnvan] = useState("");
+  const [saticiAdres, setSaticiAdres] = useState("");
+  const [saticiEmail, setSaticiEmail] = useState("");
+  const [mersisNo, setMersisNo] = useState("");
+  const [vergiNo, setVergiNo] = useState("");
+  const [kargoUcreti, setKargoUcreti] = useState("");
+  const [iadeKargo, setIadeKargo] = useState("");
 
   const [sayfaYukleniyor, setSayfaYukleniyor] = useState(true);
   const [kaydediliyor, setKaydediliyor] = useState(false);
@@ -73,6 +90,22 @@ export default function SiteAyarlariSayfasi() {
         setIban("");
       }
     }
+
+    const { data: yasalKayitlar } = await supabase
+      .from("kategoriler")
+      .select("slug, ad")
+      .in("slug", Object.values(YASAL_SLUGLAR));
+
+    const yasalDeger = (slug: string) =>
+      yasalKayitlar?.find((kayit) => kayit.slug === slug)?.ad || "";
+
+    setSaticiUnvan(yasalDeger(YASAL_SLUGLAR.unvan));
+    setSaticiAdres(yasalDeger(YASAL_SLUGLAR.adres));
+    setSaticiEmail(yasalDeger(YASAL_SLUGLAR.email));
+    setMersisNo(yasalDeger(YASAL_SLUGLAR.mersis));
+    setVergiNo(yasalDeger(YASAL_SLUGLAR.vergi));
+    setKargoUcreti(yasalDeger(YASAL_SLUGLAR.kargo));
+    setIadeKargo(yasalDeger(YASAL_SLUGLAR.iadeKargo));
 
     setSayfaYukleniyor(false);
   };
@@ -127,6 +160,43 @@ export default function SiteAyarlariSayfasi() {
       );
       setKaydediliyor(false);
       return;
+    }
+
+    const yasalAyarlar = [
+      [YASAL_SLUGLAR.unvan, saticiUnvan.trim()],
+      [YASAL_SLUGLAR.adres, saticiAdres.trim()],
+      [YASAL_SLUGLAR.email, saticiEmail.trim()],
+      [YASAL_SLUGLAR.mersis, mersisNo.trim()],
+      [YASAL_SLUGLAR.vergi, vergiNo.trim()],
+      [YASAL_SLUGLAR.kargo, kargoUcreti.trim()],
+      [YASAL_SLUGLAR.iadeKargo, iadeKargo.trim()],
+    ] as const;
+
+    for (const [slug, deger] of yasalAyarlar) {
+      const { data: mevcut } = await supabase
+        .from("kategoriler")
+        .select("id")
+        .eq("slug", slug)
+        .maybeSingle();
+
+      const { error: yasalHata } = mevcut?.id
+        ? await supabase
+            .from("kategoriler")
+            .update({ ad: deger || "-", aktif: true })
+            .eq("id", mevcut.id)
+        : await supabase.from("kategoriler").insert({
+            ad: deger || "-",
+            slug,
+            aktif: true,
+          });
+
+      if (yasalHata) {
+        setMesaj(
+          "Temel ayarlar kaydedildi ancak yasal/satıcı bilgileri kaydedilemedi."
+        );
+        setKaydediliyor(false);
+        return;
+      }
     }
 
     setMesaj("Site ayarları başarıyla kaydedildi.");
@@ -242,6 +312,72 @@ export default function SiteAyarlariSayfasi() {
             <p className="mt-3 text-xs leading-5 text-zinc-500">
               Banka veya hesap değiştiğinde sadece bu alanları güncellemen
               yeterli. Sepette müşteriye yeni bilgiler gösterilir.
+            </p>
+          </div>
+
+          <div className="mt-6 rounded-3xl border border-zinc-200 bg-white p-5">
+            <h2 className="text-lg font-bold text-zinc-900">
+              Yasal ve Satıcı Bilgileri
+            </h2>
+            <p className="mt-1 text-sm leading-6 text-zinc-500">
+              KVKK, ön bilgilendirme ve mesafeli satış metinlerinde kullanılacak
+              bilgileri eksiksiz doldur.
+            </p>
+
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+              <input
+                value={saticiUnvan}
+                onChange={(e) => setSaticiUnvan(e.target.value)}
+                placeholder="Satıcı adı / ticari unvan"
+                className="rounded-2xl border border-zinc-200 px-4 py-3 text-zinc-900 outline-none focus:border-[#b68b5b]"
+              />
+              <input
+                type="email"
+                value={saticiEmail}
+                onChange={(e) => setSaticiEmail(e.target.value)}
+                placeholder="E-posta"
+                className="rounded-2xl border border-zinc-200 px-4 py-3 text-zinc-900 outline-none focus:border-[#b68b5b]"
+              />
+              <input
+                value={mersisNo}
+                onChange={(e) => setMersisNo(e.target.value)}
+                placeholder="MERSİS No (varsa)"
+                className="rounded-2xl border border-zinc-200 px-4 py-3 text-zinc-900 outline-none focus:border-[#b68b5b]"
+              />
+              <input
+                value={vergiNo}
+                onChange={(e) => setVergiNo(e.target.value)}
+                placeholder="Vergi No (varsa)"
+                className="rounded-2xl border border-zinc-200 px-4 py-3 text-zinc-900 outline-none focus:border-[#b68b5b]"
+              />
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={kargoUcreti}
+                onChange={(e) => setKargoUcreti(e.target.value)}
+                placeholder="Kargo / teslimat ücreti (TL)"
+                className="rounded-2xl border border-zinc-200 px-4 py-3 text-zinc-900 outline-none focus:border-[#b68b5b]"
+              />
+              <input
+                value={iadeKargo}
+                onChange={(e) => setIadeKargo(e.target.value)}
+                placeholder="İade için taşıyıcı/kargo firması"
+                className="rounded-2xl border border-zinc-200 px-4 py-3 text-zinc-900 outline-none focus:border-[#b68b5b]"
+              />
+            </div>
+
+            <textarea
+              value={saticiAdres}
+              onChange={(e) => setSaticiAdres(e.target.value)}
+              placeholder="Satıcının açık adresi / iade adresi"
+              className="mt-4 min-h-24 w-full rounded-2xl border border-zinc-200 px-4 py-3 text-zinc-900 outline-none focus:border-[#b68b5b]"
+            />
+
+            <p className="mt-3 text-xs leading-5 text-zinc-500">
+              Havale/EFT ile ödeme için satıcı adı, açık adres, e-posta ve kargo
+              ücretinin girilmesi gerekir. Ücretsiz teslimat için kargo ücretine
+              0 yaz.
             </p>
           </div>
 
