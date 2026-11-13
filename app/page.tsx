@@ -10,6 +10,8 @@ type SiteAyari = {
   whatsapp: string | null;
   kampanya_baslik: string | null;
   kampanya_aciklama: string | null;
+  hesap_sahibi?: string | null;
+  iban?: string | null;
 };
 
 type Kategori = {
@@ -45,6 +47,13 @@ type UrunKart = Urun & {
 type SepetUrunu = {
   urun: UrunKart;
   adet: number;
+};
+
+type OdemeBilgisi = {
+  odemeYontemi: "whatsapp" | "havale";
+  musteriAd: string;
+  musteriTelefon: string;
+  dekont: File | null;
 };
 
 export default function AnaSayfa() {
@@ -101,7 +110,28 @@ export default function AnaSayfa() {
       ),
     }));
 
-    setSiteAyari(ayarData || null);
+    let bankaData: { hesap_sahibi: string | null; iban: string | null } | null =
+      null;
+
+    if (ayarData?.id) {
+      const { data } = await supabase
+        .from("site_ayarlari")
+        .select("hesap_sahibi, iban")
+        .eq("id", ayarData.id)
+        .maybeSingle();
+
+      bankaData = data || null;
+    }
+
+    setSiteAyari(
+      ayarData
+        ? {
+            ...ayarData,
+            hesap_sahibi: bankaData?.hesap_sahibi || null,
+            iban: bankaData?.iban || null,
+          }
+        : null
+    );
     setKategoriler(kategoriData || []);
     setUrunler(urunlerFotograflarla);
     setYukleniyor(false);
@@ -216,8 +246,49 @@ export default function AnaSayfa() {
     );
   };
 
-  const sepetiWhatsAppaAktar = async () => {
+  const siparisiTamamla = async ({
+    odemeYontemi,
+    musteriAd,
+    musteriTelefon,
+    dekont,
+  }: OdemeBilgisi) => {
     if (sepet.length === 0 || siparisOlusturuluyor) return;
+
+    const havaleMi = odemeYontemi === "havale";
+    const hesapSahibi = siteAyari?.hesap_sahibi?.trim() || "";
+    const iban = siteAyari?.iban?.replace(/\s+/g, "").toUpperCase() || "";
+
+    if (havaleMi && (!hesapSahibi || !iban)) {
+      alert("Havale/EFT bilgileri şu anda kullanılamıyor.");
+      return;
+    }
+
+    if (havaleMi && (!musteriAd.trim() || !musteriTelefon.trim())) {
+      alert("Lütfen ad soyad ve telefon bilgilerini girin.");
+      return;
+    }
+
+    if (havaleMi && !dekont) {
+      alert("Ödemeyi yaptıktan sonra dekont yüklemeniz gerekiyor.");
+      return;
+    }
+
+    if (dekont && dekont.size > 5 * 1024 * 1024) {
+      alert("Dekont dosyası en fazla 5 MB olabilir.");
+      return;
+    }
+
+    const izinliDekontTurleri = [
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+      "application/pdf",
+    ];
+
+    if (dekont && !izinliDekontTurleri.includes(dekont.type)) {
+      alert("Dekont JPG, PNG, WEBP veya PDF formatında olmalı.");
+      return;
+    }
 
     const whatsappPenceresi = window.open("about:blank", "_blank");
     setSiparisOlusturuluyor(true);
@@ -235,20 +306,68 @@ Ara Toplam: ${fiyatFormatla(item.urun.fiyat * item.adet)}`
     const magazLinki =
       typeof window !== "undefined" ? window.location.origin : "";
 
+    const siparisGrupId = crypto.randomUUID();
+    let dekontPath: string | null = null;
+
+    if (havaleMi && dekont) {
+      const uzanti = dekont.name.split(".").pop()?.toLowerCase() || "jpg";
+      dekontPath = `${siparisGrupId}/dekont.${uzanti}`;
+
+      const { error: dekontHatasi } = await supabase.storage
+        .from("dekontlar")
+        .upload(dekontPath, dekont, {
+          cacheControl: "3600",
+          upsert: false,
+          contentType: dekont.type,
+        });
+
+      if (dekontHatasi) {
+        console.error("Dekont yüklenemedi:", dekontHatasi);
+        whatsappPenceresi?.close();
+        alert("Dekont yüklenemedi. Lütfen tekrar deneyin.");
+        setSiparisOlusturuluyor(false);
+        return;
+      }
+    }
+
+    const odemeSatirlari = havaleMi
+      ? `Ödeme Yöntemi: Havale / EFT
+Müşteri: ${musteriAd.trim()}
+Telefon: ${musteriTelefon.trim()}
+Ödeme Durumu: Müşteri ödemeyi yaptığını bildirdi.
+Dekont: Sisteme yüklendi.`
+      : "Ödeme Yöntemi: WhatsApp";
+
     const mesaj = `Merhaba ${siteAdi}, aşağıdaki ürünleri sipariş vermek istiyorum.
 
 ${urunSatirlari}
 
 Toplam: ${fiyatFormatla(sepetToplami)}
+${odemeSatirlari}
 Mağaza: ${magazLinki}`;
 
-    const siparisKayitlari = sepet.map((item) => ({
-      urun_id: item.urun.id,
-      urun_adi: item.urun.ad,
-      adet: item.adet,
-      durum: "bekliyor",
-      whatsapp_mesaji: mesaj,
-    }));
+    const siparisKayitlari = sepet.map((item) =>
+      havaleMi
+        ? {
+            urun_id: item.urun.id,
+            urun_adi: item.urun.ad,
+            adet: item.adet,
+            musteri_ad: musteriAd.trim(),
+            musteri_telefon: musteriTelefon.trim(),
+            durum: "odeme_kontrolu",
+            whatsapp_mesaji: mesaj,
+            odeme_yontemi: "havale",
+            dekont_path: dekontPath,
+            siparis_grup_id: siparisGrupId,
+          }
+        : {
+            urun_id: item.urun.id,
+            urun_adi: item.urun.ad,
+            adet: item.adet,
+            durum: "bekliyor",
+            whatsapp_mesaji: mesaj,
+          }
+    );
 
     const { error } = await supabase
       .from("siparisler")
@@ -623,8 +742,10 @@ Mağaza: ${magazLinki}`;
           sepetToplami={sepetToplami}
           adetDegistir={sepetAdetDegistir}
           sepettenCikar={sepettenCikar}
-          siparisiTamamla={sepetiWhatsAppaAktar}
+          siparisiTamamla={siparisiTamamla}
           siparisOlusturuluyor={siparisOlusturuluyor}
+          hesapSahibi={siteAyari?.hesap_sahibi || ""}
+          iban={siteAyari?.iban || ""}
         />
       )}
 
@@ -942,6 +1063,8 @@ function SepetModal({
   sepettenCikar,
   siparisiTamamla,
   siparisOlusturuluyor,
+  hesapSahibi,
+  iban,
 }: {
   sepet: SepetUrunu[];
   kapat: () => void;
@@ -949,9 +1072,44 @@ function SepetModal({
   sepetToplami: number;
   adetDegistir: (urunId: string, yeniAdet: number) => void;
   sepettenCikar: (urunId: string) => void;
-  siparisiTamamla: () => void;
+  siparisiTamamla: (odemeBilgisi: OdemeBilgisi) => void;
   siparisOlusturuluyor: boolean;
+  hesapSahibi: string;
+  iban: string;
 }) {
+  const havaleAktif = Boolean(hesapSahibi.trim() && iban.trim());
+  const [odemeYontemi, setOdemeYontemi] = useState<"whatsapp" | "havale">(
+    "whatsapp"
+  );
+  const [musteriAd, setMusteriAd] = useState("");
+  const [musteriTelefon, setMusteriTelefon] = useState("");
+  const [dekont, setDekont] = useState<File | null>(null);
+  const [ibanKopyalandi, setIbanKopyalandi] = useState(false);
+
+  const ibanGosterim = iban
+    .replace(/\s+/g, "")
+    .replace(/(.{4})/g, "$1 ")
+    .trim();
+
+  const ibanKopyala = async () => {
+    try {
+      await navigator.clipboard.writeText(iban.replace(/\s+/g, ""));
+      setIbanKopyalandi(true);
+      window.setTimeout(() => setIbanKopyalandi(false), 1600);
+    } catch {
+      alert("IBAN kopyalanamadı. Lütfen elle seçip kopyalayın.");
+    }
+  };
+
+  const tamamla = () => {
+    siparisiTamamla({
+      odemeYontemi,
+      musteriAd,
+      musteriTelefon,
+      dekont,
+    });
+  };
+
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/55 px-3 py-5">
       <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
@@ -1078,23 +1236,154 @@ function SepetModal({
                     {fiyatFormatla(sepetToplami)}
                   </span>
                 </div>
-
-                <p className="mt-2 text-xs leading-5 text-zinc-500">
-                  Sipariş gönderildiğinde ürünler admin paneline “Bekliyor”
-                  olarak düşer. Onaylandığında stoktan ilgili adet kadar düşülür.
-                </p>
               </div>
+
+              <div className="mt-5">
+                <p className="text-sm font-black text-zinc-900">
+                  Ödeme Yöntemi
+                </p>
+
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setOdemeYontemi("whatsapp")}
+                    className={`rounded-xl border px-3 py-3 text-sm font-black transition ${
+                      odemeYontemi === "whatsapp"
+                        ? "border-[#25D366] bg-green-50 text-green-700"
+                        : "border-zinc-200 bg-white text-zinc-700"
+                    }`}
+                  >
+                    WhatsApp
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={!havaleAktif}
+                    onClick={() => setOdemeYontemi("havale")}
+                    className={`rounded-xl border px-3 py-3 text-sm font-black transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                      odemeYontemi === "havale"
+                        ? "border-[#ff5c35] bg-[#fff0e8] text-[#8a3a26]"
+                        : "border-zinc-200 bg-white text-zinc-700"
+                    }`}
+                  >
+                    Havale / EFT
+                  </button>
+                </div>
+
+                {!havaleAktif && (
+                  <p className="mt-2 text-xs text-zinc-400">
+                    Havale/EFT satıcı tarafından henüz aktif edilmemiş.
+                  </p>
+                )}
+              </div>
+
+              {odemeYontemi === "havale" && havaleAktif && (
+                <div className="mt-4 space-y-4 rounded-2xl border border-[#ffd3c4] bg-[#fffaf7] p-4">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wide text-zinc-400">
+                      Hesap Sahibi
+                    </p>
+                    <p className="mt-1 text-sm font-black text-zinc-900">
+                      {hesapSahibi}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wide text-zinc-400">
+                      IBAN
+                    </p>
+                    <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <p className="break-all font-mono text-sm font-black text-zinc-900">
+                        {ibanGosterim}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={ibanKopyala}
+                        className="shrink-0 rounded-lg bg-white px-3 py-2 text-xs font-black text-[#8a3a26] shadow-sm"
+                      >
+                        {ibanKopyalandi ? "Kopyalandı" : "IBAN'ı Kopyala"}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl bg-white p-3">
+                    <p className="text-xs text-zinc-500">
+                      Gönderilecek tutar
+                    </p>
+                    <p className="mt-1 text-xl font-black text-[#ff5c35]">
+                      {fiyatFormatla(sepetToplami)}
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-xs font-bold text-zinc-600">
+                      Ad Soyad
+                    </label>
+                    <input
+                      value={musteriAd}
+                      onChange={(e) => setMusteriAd(e.target.value)}
+                      placeholder="Ödemeyi yapan kişi"
+                      className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-3 text-sm outline-none focus:border-[#ff5c35]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-xs font-bold text-zinc-600">
+                      Telefon
+                    </label>
+                    <input
+                      type="tel"
+                      value={musteriTelefon}
+                      onChange={(e) => setMusteriTelefon(e.target.value)}
+                      placeholder="05xx xxx xx xx"
+                      className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-3 text-sm outline-none focus:border-[#ff5c35]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-xs font-bold text-zinc-600">
+                      Ödemeyi yaptıysan dekontu yükle
+                    </label>
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,application/pdf"
+                      onChange={(e) => setDekont(e.target.files?.[0] || null)}
+                      className="block w-full rounded-xl border border-dashed border-zinc-300 bg-white px-3 py-3 text-xs text-zinc-600 file:mr-3 file:rounded-lg file:border-0 file:bg-[#fff0e8] file:px-3 file:py-2 file:text-xs file:font-black file:text-[#8a3a26]"
+                    />
+                    <p className="mt-2 text-[11px] leading-5 text-zinc-400">
+                      JPG, PNG, WEBP veya PDF. En fazla 5 MB.
+                    </p>
+                  </div>
+
+                  <p className="text-xs leading-5 text-zinc-500">
+                    Dekont yüklemek ödemenin otomatik onaylandığı anlamına
+                    gelmez. Satıcı banka hesabını kontrol ettikten sonra
+                    siparişi onaylar.
+                  </p>
+                </div>
+              )}
 
               <button
                 type="button"
-                onClick={siparisiTamamla}
+                onClick={tamamla}
                 disabled={siparisOlusturuluyor}
-                className="mt-4 w-full rounded-xl bg-[#25D366] px-6 py-4 text-sm font-black text-white transition hover:brightness-95 disabled:opacity-50"
+                className={`mt-4 w-full rounded-xl px-6 py-4 text-sm font-black text-white transition hover:brightness-95 disabled:opacity-50 ${
+                  odemeYontemi === "havale"
+                    ? "bg-[#ff5c35]"
+                    : "bg-[#25D366]"
+                }`}
               >
                 {siparisOlusturuluyor
                   ? "Sipariş Kaydediliyor..."
-                  : "WhatsApp’tan Sipariş Ver"}
+                  : odemeYontemi === "havale"
+                    ? "Ödemeyi Yaptım, Siparişi Gönder"
+                    : "WhatsApp’tan Sipariş Ver"}
               </button>
+
+              <p className="mt-3 text-center text-xs leading-5 text-zinc-500">
+                Sipariş admin paneline kaydedilir. Stok yalnızca satıcı
+                siparişi onayladığında düşer.
+              </p>
             </>
           )}
         </div>
