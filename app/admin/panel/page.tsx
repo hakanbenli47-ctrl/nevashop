@@ -155,7 +155,7 @@ export default function AdminPanelSayfasi() {
             </div>
             <h2 className="text-xl font-bold text-zinc-900">Site Ayarları</h2>
             <p className="mt-2 text-sm leading-6 text-zinc-500">
-              Telefon, WhatsApp numarası ve temel site bilgilerini yönet.
+              Telefon, WhatsApp, Havale/EFT ve temel site bilgilerini yönet.
             </p>
           </button>
         </div>
