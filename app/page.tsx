@@ -49,14 +49,44 @@ type SepetUrunu = {
   adet: number;
 };
 
+type YasalAyarlar = {
+  unvan: string;
+  adres: string;
+  email: string;
+  mersis: string;
+  vergi: string;
+  kargo: string;
+  iadeKargo: string;
+};
+
 type OdemeBilgisi = {
   odemeYontemi: "whatsapp" | "havale";
   musteriAd: string;
   musteriTelefon: string;
   dekont: File | null;
+  sozlesmeOnay: boolean;
 };
 
 const ODEME_AYAR_SLUG = "neva-odeme-ayarlari-sistem";
+const YASAL_SLUGLAR = {
+  unvan: "neva-sistem-yasal-unvan",
+  adres: "neva-sistem-yasal-adres",
+  email: "neva-sistem-yasal-email",
+  mersis: "neva-sistem-yasal-mersis",
+  vergi: "neva-sistem-yasal-vergi",
+  kargo: "neva-sistem-yasal-kargo-ucreti",
+  iadeKargo: "neva-sistem-yasal-iade-kargo",
+} as const;
+
+const BOS_YASAL: YasalAyarlar = {
+  unvan: "",
+  adres: "",
+  email: "",
+  mersis: "",
+  vergi: "",
+  kargo: "",
+  iadeKargo: "",
+};
 const SIPARIS_META_PREFIX = "__NEVA_SIPARIS_V1__";
 
 function utf8Base64Encode(value: string) {
@@ -115,6 +145,7 @@ async function dekontuSikistir(dosya: File) {
 
 export default function AnaSayfa() {
   const [siteAyari, setSiteAyari] = useState<SiteAyari | null>(null);
+  const [yasalAyarlar, setYasalAyarlar] = useState<YasalAyarlar>(BOS_YASAL);
   const [kategoriler, setKategoriler] = useState<Kategori[]>([]);
   const [urunler, setUrunler] = useState<UrunKart[]>([]);
   const [seciliKategori, setSeciliKategori] = useState("tum");
@@ -185,6 +216,27 @@ export default function AnaSayfa() {
       }
     }
 
+    const { data: yasalKayitlar } = await supabase
+      .from("kategoriler")
+      .select("slug, ad")
+      .in("slug", Object.values(YASAL_SLUGLAR));
+
+    const yasalDeger = (slug: string) => {
+      const deger =
+        yasalKayitlar?.find((kayit) => kayit.slug === slug)?.ad || "";
+      return deger === "-" ? "" : deger;
+    };
+
+    setYasalAyarlar({
+      unvan: yasalDeger(YASAL_SLUGLAR.unvan),
+      adres: yasalDeger(YASAL_SLUGLAR.adres),
+      email: yasalDeger(YASAL_SLUGLAR.email),
+      mersis: yasalDeger(YASAL_SLUGLAR.mersis),
+      vergi: yasalDeger(YASAL_SLUGLAR.vergi),
+      kargo: yasalDeger(YASAL_SLUGLAR.kargo),
+      iadeKargo: yasalDeger(YASAL_SLUGLAR.iadeKargo),
+    });
+
     setSiteAyari(
       ayarData
         ? {
@@ -194,7 +246,11 @@ export default function AnaSayfa() {
           }
         : null
     );
-    setKategoriler(kategoriData || []);
+    setKategoriler(
+      (kategoriData || []).filter(
+        (kategori) => !kategori.slug.startsWith("neva-sistem-")
+      )
+    );
     setUrunler(urunlerFotograflarla);
     setYukleniyor(false);
   };
@@ -313,12 +369,34 @@ export default function AnaSayfa() {
     musteriAd,
     musteriTelefon,
     dekont,
+    sozlesmeOnay,
   }: OdemeBilgisi) => {
     if (sepet.length === 0 || siparisOlusturuluyor) return;
 
     const havaleMi = odemeYontemi === "havale";
     const hesapSahibi = siteAyari?.hesap_sahibi?.trim() || "";
     const iban = siteAyari?.iban?.replace(/\s+/g, "").toUpperCase() || "";
+    const kargoTanimiVar = yasalAyarlar.kargo !== "";
+    const kargoUcreti = kargoTanimiVar ? Number(yasalAyarlar.kargo) : 0;
+    const genelToplam = sepetToplami + kargoUcreti;
+    const yasalBilgilerTam =
+      Boolean(yasalAyarlar.unvan.trim()) &&
+      Boolean(yasalAyarlar.adres.trim()) &&
+      Boolean(yasalAyarlar.email.trim());
+
+    if (!sozlesmeOnay) {
+      alert(
+        "Lütfen Ön Bilgilendirme Formu ve Mesafeli Satış Sözleşmesini okuyup onaylayın."
+      );
+      return;
+    }
+
+    if (havaleMi && (!yasalBilgilerTam || !kargoTanimiVar)) {
+      alert(
+        "Havale/EFT için satıcının yasal bilgileri ve kargo/teslimat ücreti henüz tamamlanmamış."
+      );
+      return;
+    }
 
     if (havaleMi && (!hesapSahibi || !iban)) {
       alert("Havale/EFT bilgileri şu anda kullanılamıyor.");
@@ -379,8 +457,18 @@ Dekont: Sisteme yüklendi.`
 
 ${urunSatirlari}
 
-Toplam: ${fiyatFormatla(sepetToplami)}
-${odemeSatirlari}
+Ürünler Toplamı: ${fiyatFormatla(sepetToplami)}
+Kargo / Teslimat: ${
+        kargoTanimiVar ? fiyatFormatla(kargoUcreti) : "WhatsApp'ta netleştirilecek"
+      }
+${
+        kargoTanimiVar
+          ? `Genel Toplam: ${fiyatFormatla(genelToplam)}\n`
+          : ""
+      }${odemeSatirlari}
+Ön bilgilendirme ve mesafeli satış sözleşmesi teyidi: ${new Date().toLocaleString(
+        "tr-TR"
+      )}
 Mağaza: ${magazLinki}`;
 
       const havaleMeta = havaleMi
@@ -392,6 +480,7 @@ Mağaza: ${magazLinki}`;
               odeme_yontemi: "havale",
               siparis_kodu: siparisKodu,
               dekont_data_url: dekontDataUrl,
+              sozlesme_teyit_tarihi: new Date().toISOString(),
             })
           )
         : null;
@@ -762,6 +851,23 @@ Mağaza: ${magazLinki}`;
             <p className="text-sm text-zinc-500">
               Saten buket ve hediyelik ürünler
             </p>
+            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-xs font-bold text-zinc-500">
+              <a href="/yasal#on-bilgilendirme" className="hover:text-[#ff5c35]">
+                Ön Bilgilendirme
+              </a>
+              <a href="/yasal#mesafeli-satis" className="hover:text-[#ff5c35]">
+                Mesafeli Satış
+              </a>
+              <a href="/yasal#iade" className="hover:text-[#ff5c35]">
+                İade / Cayma
+              </a>
+              <a href="/yasal#kvkk" className="hover:text-[#ff5c35]">
+                KVKK
+              </a>
+              <a href="/yasal#cerez" className="hover:text-[#ff5c35]">
+                Çerez Politikası
+              </a>
+            </div>
           </div>
 
           <div className="flex flex-col gap-2 sm:flex-row">
@@ -803,6 +909,7 @@ Mağaza: ${magazLinki}`;
           siparisOlusturuluyor={siparisOlusturuluyor}
           hesapSahibi={siteAyari?.hesap_sahibi || ""}
           iban={siteAyari?.iban || ""}
+          yasalAyarlar={yasalAyarlar}
         />
       )}
 
@@ -1122,6 +1229,7 @@ function SepetModal({
   siparisOlusturuluyor,
   hesapSahibi,
   iban,
+  yasalAyarlar,
 }: {
   sepet: SepetUrunu[];
   kapat: () => void;
@@ -1133,8 +1241,21 @@ function SepetModal({
   siparisOlusturuluyor: boolean;
   hesapSahibi: string;
   iban: string;
+  yasalAyarlar: YasalAyarlar;
 }) {
-  const havaleAktif = Boolean(hesapSahibi.trim() && iban.trim());
+  const yasalBilgilerTam =
+    Boolean(yasalAyarlar.unvan.trim()) &&
+    Boolean(yasalAyarlar.adres.trim()) &&
+    Boolean(yasalAyarlar.email.trim());
+  const kargoTanimiVar = yasalAyarlar.kargo !== "";
+  const kargoUcreti = kargoTanimiVar ? Number(yasalAyarlar.kargo) : 0;
+  const genelToplam = sepetToplami + kargoUcreti;
+  const havaleAktif = Boolean(
+    hesapSahibi.trim() &&
+      iban.trim() &&
+      yasalBilgilerTam &&
+      kargoTanimiVar
+  );
   const [odemeYontemi, setOdemeYontemi] = useState<"whatsapp" | "havale">(
     "whatsapp"
   );
@@ -1142,6 +1263,7 @@ function SepetModal({
   const [musteriTelefon, setMusteriTelefon] = useState("");
   const [dekont, setDekont] = useState<File | null>(null);
   const [ibanKopyalandi, setIbanKopyalandi] = useState(false);
+  const [sozlesmeOnay, setSozlesmeOnay] = useState(false);
 
   const ibanGosterim = iban
     .replace(/\s+/g, "")
@@ -1164,6 +1286,7 @@ function SepetModal({
       musteriAd,
       musteriTelefon,
       dekont,
+      sozlesmeOnay,
     });
   };
 
@@ -1287,12 +1410,32 @@ function SepetModal({
               <div className="mt-5 rounded-2xl bg-[#fff7f2] p-4">
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-sm font-bold text-zinc-500">
-                    Toplam
+                    Ürünler Toplamı
                   </span>
-                  <span className="text-2xl font-black text-[#ff5c35]">
+                  <span className="text-xl font-black text-[#ff5c35]">
                     {fiyatFormatla(sepetToplami)}
                   </span>
                 </div>
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <span className="text-sm font-bold text-zinc-500">
+                    Kargo / Teslimat
+                  </span>
+                  <span className="text-sm font-black text-zinc-900">
+                    {kargoTanimiVar
+                      ? fiyatFormatla(kargoUcreti)
+                      : "Sipariş öncesi netleşecek"}
+                  </span>
+                </div>
+                {kargoTanimiVar && (
+                  <div className="mt-3 flex items-center justify-between gap-3 border-t border-[#ffe1d6] pt-3">
+                    <span className="text-sm font-black text-zinc-900">
+                      Genel Toplam
+                    </span>
+                    <span className="text-2xl font-black text-[#ff5c35]">
+                      {fiyatFormatla(genelToplam)}
+                    </span>
+                  </div>
+                )}
               </div>
 
               <div className="mt-5">
@@ -1329,12 +1472,85 @@ function SepetModal({
 
                 {!havaleAktif && (
                   <p className="mt-2 text-xs text-zinc-400">
-                    Havale/EFT satıcı tarafından henüz aktif edilmemiş.
+                    Havale/EFT için IBAN, satıcı yasal bilgileri ve kargo/teslimat ücreti admin ayarlarından tamamlanmalıdır.
                   </p>
                 )}
               </div>
 
-              {odemeYontemi === "havale" && havaleAktif && (
+              <div className="mt-4 rounded-2xl border border-zinc-200 bg-white p-4">
+                <p className="text-sm font-black text-zinc-900">
+                  Siparişe Özel Ön Bilgilendirme
+                </p>
+                <div className="mt-3 space-y-1 text-xs leading-5 text-zinc-600">
+                  <p>
+                    Satıcı: <strong>{yasalAyarlar.unvan || "Satıcı bilgisi eksik"}</strong>
+                  </p>
+                  <p>
+                    Telefon: <strong>site üzerindeki iletişim numarası</strong>
+                  </p>
+                  <p>
+                    Kargo/Teslimat:{" "}
+                    <strong>
+                      {kargoTanimiVar
+                        ? fiyatFormatla(kargoUcreti)
+                        : "WhatsApp'ta sipariş kesinleşmeden önce bildirilecek"}
+                    </strong>
+                  </p>
+                  {kargoTanimiVar && (
+                    <p>
+                      Ödeme yükümlülüğü doğuran toplam:{" "}
+                      <strong>{fiyatFormatla(genelToplam)}</strong>
+                    </p>
+                  )}
+                </div>
+
+                <p className="mt-3 text-xs leading-5 text-zinc-500">
+                  <a
+                    href="/yasal#on-bilgilendirme"
+                    target="_blank"
+                    className="font-black text-[#8a3a26] underline"
+                  >
+                    Ön Bilgilendirme Formu
+                  </a>
+                  {" "}ve{" "}
+                  <a
+                    href="/yasal#mesafeli-satis"
+                    target="_blank"
+                    className="font-black text-[#8a3a26] underline"
+                  >
+                    Mesafeli Satış Sözleşmesi
+                  </a>
+                  {" "}siparişin ayrılmaz parçasıdır.
+                </p>
+
+                <label className="mt-3 flex items-start gap-3 rounded-xl bg-[#fff7f2] p-3 text-xs font-semibold leading-5 text-zinc-700">
+                  <input
+                    type="checkbox"
+                    checked={sozlesmeOnay}
+                    onChange={(e) => setSozlesmeOnay(e.target.checked)}
+                    className="mt-1"
+                  />
+                  <span>
+                    Ön bilgilendirmeyi ve mesafeli satış sözleşmesini okudum;
+                    siparişin ödeme yükümlülüğü doğurduğunu biliyorum.
+                  </span>
+                </label>
+
+                <p className="mt-3 text-[11px] leading-5 text-zinc-400">
+                  Kişisel verileriniz{" "}
+                  <a
+                    href="/yasal#kvkk"
+                    target="_blank"
+                    className="font-bold underline"
+                  >
+                    KVKK Aydınlatma Metni
+                  </a>
+                  {" "}kapsamında işlenir. KVKK aydınlatması için ayrıca açık
+                  rıza vermeniz istenmez.
+                </p>
+              </div>
+
+              {odemeYontemi === "havale" && havaleAktif && sozlesmeOnay && (
                 <div className="mt-4 space-y-4 rounded-2xl border border-[#ffd3c4] bg-[#fffaf7] p-4">
                   <div>
                     <p className="text-xs font-bold uppercase tracking-wide text-zinc-400">
@@ -1368,7 +1584,7 @@ function SepetModal({
                       Gönderilecek tutar
                     </p>
                     <p className="mt-1 text-xl font-black text-[#ff5c35]">
-                      {fiyatFormatla(sepetToplami)}
+                      {fiyatFormatla(genelToplam)}
                     </p>
                   </div>
 
@@ -1423,7 +1639,7 @@ function SepetModal({
               <button
                 type="button"
                 onClick={tamamla}
-                disabled={siparisOlusturuluyor}
+                disabled={siparisOlusturuluyor || !sozlesmeOnay}
                 className={`mt-4 w-full rounded-xl px-6 py-4 text-sm font-black text-white transition hover:brightness-95 disabled:opacity-50 ${
                   odemeYontemi === "havale"
                     ? "bg-[#ff5c35]"
