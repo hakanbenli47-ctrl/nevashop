@@ -63,6 +63,7 @@ export default function YeniUrunEkleSayfasi() {
       .select("id, ad")
       .eq("aktif", true)
       .neq("slug", "neva-odeme-ayarlari-sistem")
+      .not("slug", "like", "neva-sistem-%")
       .order("ad", { ascending: true });
 
     setKategoriler(data || []);
